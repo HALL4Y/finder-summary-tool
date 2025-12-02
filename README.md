@@ -26,6 +26,8 @@ Sélectionnez 10, 100 ou 1000 fichiers, faites un clic droit, et obtenez un fich
 2. Sélectionnez plusieurs fichiers ou dossiers.
 3. **Clic-Droit** > **Actions rapides** > **Créer un résumé de ma sélection**.
 4. Attendez la notification... Le fichier `listing_date_nom.txt` apparaîtra dans le même dossier.
+5. 
+<img src="https://github.com/user-attachments/assets/74d8c06a-ec55-406f-824d-22f4bbb92403" width="600" alt="Démonstration Finder Summary"/>
 
 ---
 *Développé par HALL4Y.*
