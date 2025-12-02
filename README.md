@@ -1,6 +1,8 @@
 # 📂 Finder Summary Tool
+<img alt="image" src="https://github.com/user-attachments/assets/dcaa3181-e0e1-448e-8f18-fbca93cbe885" width="500" alt="Logo Finder Summary Tool" />
 
-Une **Action Rapide (Quick Action)** pour macOS qui génère instantanément un rapport détaillé (Listing) des fichiers sélectionnés dans le Finder.
+Une **Action Rapide (Quick Action)** pour macOS qui génère instantanément\
+un rapport détaillé (Listing) des fichiers sélectionnés dans le Finder.
 
 ![Platform](https://img.shields.io/badge/macOS-Finder%20Extension-blue) ![Language](https://img.shields.io/badge/Language-Zsh-green)
 
