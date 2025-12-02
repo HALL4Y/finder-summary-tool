@@ -1,10 +1,7 @@
 #!/bin/zsh
-# ------------------------------------------------------------------
-# V3.0 - Alignement millimétré & Unités intelligentes (Ko/Mo)
-# ------------------------------------------------------------------
+# V3.0 FINAL - Alignement fixe & Unités intelligentes (Ko/Mo)
 
 start_epoch=$(date +%s)
-
 first_item="$1"
 parent_dir=$(dirname "$first_item")
 parent_name=$(basename "$parent_dir")
@@ -38,22 +35,16 @@ done
 
 listing_temp_path="$temp_dir/$(basename "$listing_final_path")"
 
-# --- CONFIGURATION STRICTE DU TABLEAU ---
-# %-20s = Colonne de 20 chars alignée à gauche (Pour "Date modification")
-# %-10s = Colonne de 10 chars alignée à gauche (Pour "Poids")
-FMT="%-20s | %-10s | %s\n"
+# --- CONFIGURATION DU TABLEAU ---
+FMT="%-20s | %-12s | %s\n"
+SEP="---------------------|--------------|--------------------------------------------------"
 
-# La ligne de séparation doit correspondre EXACTEMENT aux largeurs ci-dessus
-# 20 tirets + 1 espace + | + 1 espace + 10 tirets + 1 espace + | + le reste
-SEP="---------------------|------------|--------------------------------------------------"
-
-# En-tête du fichier
+# En-tête
 {
     echo "=== LISTING : $parent_name ==="
     echo "Généré le : $(date '+%d/%m/%Y à %H:%M')"
     echo ""
-    # On utilise le MEME format pour le titre que pour les données
-    printf "$FMT" "Date modification" "Poids" "Nom"
+    printf "$FMT" "Date modif." "Poids" "Nom du fichier"
     echo "$SEP"
 } > "$listing_temp_path"
 
@@ -68,17 +59,15 @@ for item in "$@"; do
     mod_date=$(stat -f "%Sm" -t "%d/%m/%Y %H:%M" "$item" 2>/dev/null || echo "N/A")
     mod_epoch=$(stat -f "%m" "$item")
 
+    # Gestion intelligente Ko / Mo
     if [[ -f "$item" ]]; then
       size_bytes=$(stat -f "%z" "$item")
       
-      # --- LOGIQUE INTELLIGENTE Ko / Mo ---
       if (( size_bytes < 1048576 )); then
-         # En dessous de 1 Mo -> Affichage en Ko (Entier)
          size_kb=$(( size_bytes / 1024 ))
-         if (( size_kb == 0 )); then size_kb=1; fi # Minimum 1 Ko affiché
+         if (( size_kb == 0 )); then size_kb=1; fi
          size_display="${size_kb} Ko"
       else
-         # Au dessus de 1 Mo -> Affichage en Mo (2 décimales)
          size_mo_item=$(echo "scale=2; $size_bytes/1048576" | bc)
          size_display="${size_mo_item} Mo"
       fi
@@ -95,27 +84,23 @@ for item in "$@"; do
       oldest_date=$mod_epoch
     fi
 
-    # Écriture de la ligne
     printf "$FMT" "$mod_date" "$size_display" "$item_name" >> "$listing_temp_path"
   fi
 done
 
-# Pied de page (Fermeture du tableau)
 echo "$SEP" >> "$listing_temp_path"
 
-# --- BLOC RÉSUMÉ (Hors tableau) ---
+# --- BLOC RÉSUMÉ ---
 age_seconds=$((current_date_epoch - oldest_date))
 age_days=$((age_seconds / 86400))
-
-# Calcul du total final en Mo pour le résumé
 total_size_mo_final=$(echo "scale=2; $total_size_bytes/1048576" | bc)
 
 {
     echo ""
     echo "📊 STATISTIQUES"
     echo "----------------"
-    echo "Total fichiers : $total_files"
-    echo "Poids global   : ${total_size_mo_final} Mo"
+    echo "Fichiers       : $total_files"
+    echo "Poids total    : ${total_size_mo_final} Mo"
     echo "Ancienneté max : $age_days jours"
 } >> "$listing_temp_path"
 
@@ -123,7 +108,7 @@ total_size_mo_final=$(echo "scale=2; $total_size_bytes/1048576" | bc)
 mv "$listing_temp_path" "$listing_final_path"
 rmdir "$temp_dir" 2>/dev/null || true
 
-# Notification fin
+# Notif fin
 title="Listing terminé"
 msg="Fichier créé : $(basename "$listing_final_path")"
 osascript -e "display notification \"$msg\" with title \"$title\""

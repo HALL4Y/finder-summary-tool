@@ -151,11 +151,7 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>source</key>
-					<string>on run {input, parameters}
-    display alert "Création du listing" message "L’analyse de votre sélection va commencer. Fichier en cours de création... " as informational giving up after 5
-    return input
-end run
-</string>
+					<string>on run {input, parameters}    display alert "Création du listing" message "L’analyse de votre sélection va commencer. Fichier en cours de création... " as informational giving up after 5    return inputend run</string>
 				</dict>
 				<key>BundleIdentifier</key>
 				<string>com.apple.Automator.RunScript</string>
@@ -206,12 +202,10 @@ end run</string>
 						<string>0</string>
 					</dict>
 				</dict>
-				<key>conversionLabel</key>
-				<integer>0</integer>
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:661.000000</string>
+				<string>389.500000:605.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -268,74 +262,89 @@ end run</string>
 				<dict>
 					<key>COMMAND_STRING</key>
 					<string>#!/bin/zsh
+# ------------------------------------------------------------------
+# V3.0 FINAL - Alignement fixe &amp; Unités intelligentes (Ko/Mo)
+# ------------------------------------------------------------------
 
 start_epoch=$(date +%s)
 
 first_item="$1"
 parent_dir=$(dirname "$first_item")
 parent_name=$(basename "$parent_dir")
-
 nb_total=$#
 
-est_secs=$(echo "$nb_total * 0.2" | bc)
+# Estimation temps
+est_secs=$(echo "$nb_total * 0.1" | bc) 
 est_secs_int=${est_secs%.*}
-estimated_time="${est_secs_int} seconde(s) approx."
+if [[ -z "$est_secs_int" || "$est_secs_int" -eq 0 ]]; then est_secs_int=1; fi
+estimated_time="${est_secs_int} sec."
 
-title="Listing en cours"
-subtitle="Dossier : $parent_name"
-msg="Éléments : $nb_total — Durée estimée : $estimated_time"
-osascript -e "display notification \"$msg\" with title \"$title\" subtitle \"$subtitle\""
+# Notification début
+title="Génération du listing..."
+msg="$nb_total éléments dans : $parent_name"
+osascript -e "display notification \"$msg\" with title \"$title\""
 
 date_str=$(date +"%Y%m%d")
-
-# Dossier temporaire
 temp_dir="$HOME/listing_temp"
 mkdir -p "$temp_dir"
 
-# Base du nom de fichier
+# Noms fichiers
 listing_base="listing_${date_str}_${parent_name}"
 listing_ext=".txt"
-
-# Nom final unique (dans le dossier parent)
 listing_final_path="$parent_dir/${listing_base}${listing_ext}"
+
 i=1
 while [ -e "$listing_final_path" ]; do
   listing_final_path="$parent_dir/${listing_base}_$i$listing_ext"
   i=$((i+1))
 done
 
-# Nom temporaire (même nom, mais dans le dossier temp)
-listing_file=$(basename "$listing_final_path")
-listing_temp_path="$temp_dir/$listing_file"
+listing_temp_path="$temp_dir/$(basename "$listing_final_path")"
 
-# En-tête du fichier
-echo "=== Listing de la sélection dans : $parent_name ===" &gt; "$listing_temp_path"
-echo "Généré le : $(date '+%d/%m/%Y à %H:%M')" &gt;&gt; "$listing_temp_path"
-echo "-----------------------------------------------------" &gt;&gt; "$listing_temp_path"
-echo "" &gt;&gt; "$listing_temp_path"
-echo "Date modification     | Poids (Mo) | Nom" &gt;&gt; "$listing_temp_path"
-echo "----------------------|------------|------------------------------" &gt;&gt; "$listing_temp_path"
+# --- CONFIGURATION DU TABLEAU ---
+# Colonnes fixes : 20 chars date | 12 chars poids | Reste nom
+FMT="%-20s | %-12s | %s\n"
+SEP="---------------------|--------------|--------------------------------------------------"
+
+# En-tête
+{
+    echo "=== LISTING : $parent_name ==="
+    echo "Généré le : $(date '+%d/%m/%Y à %H:%M')"
+    echo ""
+    printf "$FMT" "Date modif." "Poids" "Nom du fichier"
+    echo "$SEP"
+} &gt; "$listing_temp_path"
 
 total_files=0
-total_size=0
+total_size_bytes=0
 oldest_date=""
-
 current_date_epoch=$(date +%s)
 
+# Boucle principale
 for item in "$@"; do
   if [[ -e "$item" ]]; then
     mod_date=$(stat -f "%Sm" -t "%d/%m/%Y %H:%M" "$item" 2&gt;/dev/null || echo "N/A")
     mod_epoch=$(stat -f "%m" "$item")
 
+    # Gestion intelligente Ko / Mo
     if [[ -f "$item" ]]; then
       size_bytes=$(stat -f "%z" "$item")
-      size_mo=$(echo "scale=2; $size_bytes/1024/1024" | bc)
-      size_str=$(printf "%.2f" "$size_mo")
+      
+      if (( size_bytes &lt; 1048576 )); then
+         # &lt; 1 Mo : Affichage en Ko
+         size_kb=$(( size_bytes / 1024 ))
+         if (( size_kb == 0 )); then size_kb=1; fi
+         size_display="${size_kb} Ko"
+      else
+         # &gt; 1 Mo : Affichage en Mo
+         size_mo_item=$(echo "scale=2; $size_bytes/1048576" | bc)
+         size_display="${size_mo_item} Mo"
+      fi
 
       total_files=$((total_files+1))
-      total_size=$(echo "$total_size + $size_mo" | bc)
+      total_size_bytes=$((total_size_bytes + size_bytes))
     else
-      size_str="[DOSSIER]"
+      size_display="[DOSSIER]"
     fi
 
     item_name=$(basename "$item")
@@ -344,43 +353,37 @@ for item in "$@"; do
       oldest_date=$mod_epoch
     fi
 
-    printf "%-19s | %-10s | %s\n" "$mod_date" "$size_str" "$item_name" &gt;&gt; "$listing_temp_path"
+    # Écriture alignée
+    printf "$FMT" "$mod_date" "$size_display" "$item_name" &gt;&gt; "$listing_temp_path"
   fi
 done
 
+# Pied de page tableau
+echo "$SEP" &gt;&gt; "$listing_temp_path"
+
+# --- BLOC RÉSUMÉ (Séparé du tableau) ---
 age_seconds=$((current_date_epoch - oldest_date))
 age_days=$((age_seconds / 86400))
-age_months=$((age_days / 30))
-age_years=$((age_days / 365))
+total_size_mo_final=$(echo "scale=2; $total_size_bytes/1048576" | bc)
 
-echo "----------------------|------------|------------------------------" &gt;&gt; "$listing_temp_path"
+{
+    echo ""
+    echo "📊 STATISTIQUES"
+    echo "----------------"
+    echo "Fichiers       : $total_files"
+    echo "Poids total    : ${total_size_mo_final} Mo"
+    echo "Ancienneté max : $age_days jours"
+} &gt;&gt; "$listing_temp_path"
 
-age_str="${age_days} jour(s)\n${age_months} mois\n${age_years} années"
-
-printf "%-19b | %-10s | %s\n" "$age_str" "$(printf "%.2f" "$total_size")" "Nombre de fichiers : $total_files" &gt;&gt; "$listing_temp_path"
-
-# Déplacer le fichier et nettoyer
+# Finalisation
 mv "$listing_temp_path" "$listing_final_path"
 rmdir "$temp_dir" 2&gt;/dev/null || true
 
-end_epoch=$(date +%s)
-elapsed=$((end_epoch - start_epoch))
-
-if (( elapsed &lt; 60 )); then
-  real_time="${elapsed} s"
-else
-  mins=$((elapsed / 60))
-  secs=$((elapsed % 60))
-  real_time="${mins} min ${secs} s"
-fi
-
+# Notif fin
 title="Listing terminé"
-subtitle="Dossier : $parent_name"
-msg="Fichier : $listing_final_path — Durée réelle : $real_time"
-osascript -e "display notification \"$msg\" with title \"$title\" subtitle \"$subtitle\""
-
-echo "$listing_final_path"
-</string>
+msg="Fichier créé : $(basename "$listing_final_path")"
+osascript -e "display notification \"$msg\" with title \"$title\""
+echo "$listing_final_path"</string>
 					<key>CheckedForUserDefaultShell</key>
 					<true/>
 					<key>inputMethod</key>
@@ -495,7 +498,7 @@ echo "$listing_final_path"
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:1077.000000</string>
+				<string>389.500000:787.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -543,26 +546,7 @@ echo "$listing_final_path"
 				<key>ActionParameters</key>
 				<dict>
 					<key>source</key>
-					<string>on run {input, parameters}
-    -- input contient un chemin POSIX (texte)
-    set theFilePOSIX to item 1 of input as text
-    set dlgText to "Le listing a été créé : " &amp; theFilePOSIX
-
-    set dlgButtons to {"Ouvrir le fichier", "OK"}
-    set userChoice to button returned of ¬
-        (display alert "Listing terminé" message dlgText buttons dlgButtons default button "Ouvrir le fichier")
-
-    if userChoice is "Ouvrir le fichier" then
-        set theFileAlias to POSIX file theFilePOSIX as alias
-        tell application "Finder"
-            open theFileAlias
-            activate
-        end tell
-    end if
-
-    return input
-end run
-</string>
+					<string>on run {input, parameters}    -- input contient un chemin POSIX (texte)    set theFilePOSIX to item 1 of input as text    set dlgText to "Le listing a été créé : " &amp; theFilePOSIX    set dlgButtons to {"Ouvrir le fichier", "OK"}    set userChoice to button returned of ¬        (display alert "Listing terminé" message dlgText buttons dlgButtons default button "Ouvrir le fichier")    if userChoice is "Ouvrir le fichier" then        set theFileAlias to POSIX file theFilePOSIX as alias        tell application "Finder"            open theFileAlias            activate        end tell    end if    return inputend run</string>
 				</dict>
 				<key>BundleIdentifier</key>
 				<string>com.apple.Automator.RunScript</string>
@@ -613,12 +597,10 @@ end run</string>
 						<string>0</string>
 					</dict>
 				</dict>
-				<key>conversionLabel</key>
-				<integer>0</integer>
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:1322.000000</string>
+				<string>389.500000:1032.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -628,26 +610,26 @@ end run</string>
 	</array>
 	<key>connectors</key>
 	<dict>
-		<key>1BC2446A-6AC3-4BBD-BB3C-3FCA7135FF66</key>
+		<key>240E53FD-2566-4A40-905F-904642E97800</key>
 		<dict>
 			<key>from</key>
-			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
+			<string>F55D33DA-C56B-46CC-9403-6C1E93719C55 - F55D33DA-C56B-46CC-9403-6C1E93719C55</string>
 			<key>to</key>
-			<string>E8349500-938B-408A-8DE8-8772CA7ADC5D - E8349500-938B-408A-8DE8-8772CA7ADC5D</string>
+			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
 		</dict>
-		<key>7687F1BD-25A2-4F9E-9DA5-7C3AA7DC26AC</key>
+		<key>3AA1D415-60C6-41B4-BE02-40C17972EC5B</key>
 		<dict>
 			<key>from</key>
 			<string>E8349500-938B-408A-8DE8-8772CA7ADC5D - E8349500-938B-408A-8DE8-8772CA7ADC5D</string>
 			<key>to</key>
 			<string>48AAC1AE-81EB-4A6B-8CFD-0F95A61C4F26 - 48AAC1AE-81EB-4A6B-8CFD-0F95A61C4F26</string>
 		</dict>
-		<key>EABB8F4D-5CC1-40BE-B2C8-0910590D52A7</key>
+		<key>BCE7B172-00D0-4736-8B2A-EF04999AEC30</key>
 		<dict>
 			<key>from</key>
-			<string>F55D33DA-C56B-46CC-9403-6C1E93719C55 - F55D33DA-C56B-46CC-9403-6C1E93719C55</string>
-			<key>to</key>
 			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
+			<key>to</key>
+			<string>E8349500-938B-408A-8DE8-8772CA7ADC5D - E8349500-938B-408A-8DE8-8772CA7ADC5D</string>
 		</dict>
 	</dict>
 	<key>workflowMetaData</key>
