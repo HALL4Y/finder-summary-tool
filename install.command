@@ -1,48 +1,52 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION DU NOM ---
+# 1. Le nom du fichier dans le dossier téléchargé (GitHub)
 SOURCE_NAME="FinderSummary.workflow"
+
+# 2. Le nom qui s'affichera dans le menu Clic-Droit du Mac (C'est ici qu'on gère l'UX)
 TARGET_NAME="Créer un résumé de ma sélection.workflow"
+
+# 3. Chemin système
 DEST_DIR="$HOME/Library/Services"
 TARGET_PATH="$DEST_DIR/$TARGET_NAME"
 
 echo "================================================="
-echo "📂 FINDER SUMMARY TOOL - INSTALLATION"
+echo "📂 FINDER SUMMARY - INSTALLATEUR"
 echo "================================================="
 
-# 1. Vérifier si le dossier Services existe
-if [ ! -d "$DEST_DIR" ]; then
-    echo "⚠️  Création du dossier Services..."
-    mkdir -p "$DEST_DIR"
+# Vérification présence source
+if [ ! -d "$SOURCE_NAME" ]; then
+    echo "❌ Erreur : Le fichier source '$SOURCE_NAME' est introuvable."
+    echo "Assurez-vous d'avoir dézippé tout le dossier."
+    exit 1
 fi
 
-# 2. Vérifier si l'ancien existe déjà
+# Création dossier Services si inexistant
+mkdir -p "$DEST_DIR"
+
+# Nettoyage ancienne version
 if [ -d "$TARGET_PATH" ]; then
-    echo "🔄 Une version existe déjà."
-    read -p "Voulez-vous la remplacer ? (o/n) " choice
-    if [[ "$choice" != "o" ]]; then
-        echo "Annulation."
-        exit 0
-    fi
+    echo "🔄 Mise à jour de l'action existante..."
     rm -rf "$TARGET_PATH"
 fi
 
-# 3. Installation
-echo "🚀 Installation de l'Action Rapide..."
+# Installation (Copie + Renommage automatique)
+echo "🚀 Installation en cours..."
 cp -r "$SOURCE_NAME" "$TARGET_PATH"
 
-# 4. Confirmation
+# Vérification finale
 if [ -d "$TARGET_PATH" ]; then
     echo ""
-    echo "✅ SUCCÈS !"
-    echo "L'action est installée."
+    echo "✅ INSTALLATION RÉUSSIE !"
+    echo "L'action s'appelle désormais : '${TARGET_NAME%.*}'"
     echo ""
-    echo "👉 COMMENT L'UTILISER :"
-    echo "1. Sélectionnez des fichiers dans le Finder."
-    echo "2. Clic-droit > Actions rapides > Créer un résumé de ma sélection"
+    echo "👉 TESTEZ MAINTENANT :"
+    echo "1. Clic-droit sur un fichier."
+    echo "2. Actions rapides > Créer un résumé de ma sélection"
 else
-    echo "❌ Erreur lors de la copie."
+    echo "❌ Échec de la copie."
     exit 1
 fi
 
