@@ -103,7 +103,7 @@
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:360.000000</string>
+				<string>391.500000:360.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Get Specified Finder Items.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -151,7 +151,7 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>source</key>
-					<string>on run {input, parameters}    display alert "Création du listing" message "L’analyse de votre sélection va commencer. Fichier en cours de création... " as informational giving up after 5    return inputend run</string>
+					<string>on run {input, parameters}    display alert "Création du listing" message "L’analyse de votre sélection va commencer. Fichier en cours de création... " as informational giving up after 3    return inputend run</string>
 				</dict>
 				<key>BundleIdentifier</key>
 				<string>com.apple.Automator.RunScript</string>
@@ -205,7 +205,7 @@ end run</string>
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:605.000000</string>
+				<string>391.500000:605.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -263,38 +263,68 @@ end run</string>
 					<key>COMMAND_STRING</key>
 					<string>#!/bin/zsh
 # ------------------------------------------------------------------
-# V3.2 - Alignement fixe &amp; Unités intelligentes (Lignes + TOTAL)
+# V5.4 - Fix Détection Dossiers (Syntaxe Stricte) &amp; Mode Silencieux
 # ------------------------------------------------------------------
 
 start_epoch=$(date +%s)
 
+# --- 1. DÉTECTION ET NOMMAGE ---
 first_item="$1"
 parent_dir=$(dirname "$first_item")
-parent_name=$(basename "$parent_dir")
 nb_total=$#
 
-# 1. ESTIMATION DU TEMPS
-est_secs=$(echo "$nb_total * 0.1" | bc) 
-est_secs_int=${est_secs%.*}
-if [[ -z "$est_secs_int" || "$est_secs_int" -eq 0 ]]; then est_secs_int=1; fi
-estimated_time="${est_secs_int} sec."
+# Nommage contextuel
+if [[ $nb_total -eq 1 ]] &amp;&amp; [[ -d "$first_item" ]]; then
+    target_name=$(basename "$first_item")
+else
+    target_name=$(basename "$parent_dir")
+fi
 
-# 2. NOTIFICATION DE DÉBUT
-title="Génération du listing..."
-msg="$nb_total éléments dans : $parent_name"
-osascript -e "display notification \"$msg\" with title \"$title\""
+# Détection de Dossiers (Scan Strict)
+has_folder="false"
+for item in "$@"; do
+    if [[ -d "$item" ]]; then
+        # C'est un dossier (ou un paquet type .app, .workflow)
+        has_folder="true"
+        break
+    fi
+done
 
-# 3. PRÉPARATION FICHIER
+recursive_mode="false"
+
+# --- 2. INTERACTION (Condition Blindée) ---
+# On utilise la syntaxe double crochet [[ ]] pour être sûr à 100%
+if [[ "$has_folder" == "true" ]]; then
+    response=$(osascript -e 'try
+        tell application "System Events"
+            set userResp to button returned of (display dialog "Dossiers détectés.\n\nMode de scan ?" buttons {"Annuler", "Rapide (Dossiers seuls)", "Complet (Récursif)"} default button "Rapide (Dossiers seuls)" with title "Finder Summary V5.4" with icon note)
+        end tell
+        return userResp
+    on error
+        return "Annuler"
+    end try')
+    
+    if [[ "$response" == "Annuler" ]]; then exit 0; fi
+    if [[ "$response" == "Complet (Récursif)" ]]; then recursive_mode="true"; fi
+fi
+
+# Notification (Silencieuse)
+osascript -e "display notification \"Analyse en cours...\" with title \"Finder Summary\"" &gt; /dev/null 2&gt;&amp;1
+
+# --- 3. PRÉPARATION FICHIER ---
 date_str=$(date +"%Y%m%d")
 temp_dir="$HOME/listing_temp"
 mkdir -p "$temp_dir"
 
-# Noms fichiers
-listing_base="listing_${date_str}_${parent_name}"
+if [[ "$recursive_mode" == "true" ]]; then
+    listing_base="listing_RECURSIF_${date_str}_${target_name}"
+else
+    listing_base="listing_${date_str}_${target_name}"
+fi
+
 listing_ext=".txt"
 listing_final_path="$parent_dir/${listing_base}${listing_ext}"
 
-# Gestion doublons
 i=1
 while [ -e "$listing_final_path" ]; do
   listing_final_path="$parent_dir/${listing_base}_$i$listing_ext"
@@ -303,78 +333,118 @@ done
 
 listing_temp_path="$temp_dir/$(basename "$listing_final_path")"
 
-# 4. CONFIGURATION DU TABLEAU
+# --- 4. EN-TÊTE ---
 FMT="%-16s | %-10s | %s\n"
 
-# En-tête du fichier
 {
-    echo "=== LISTING : $parent_name ==="
+    echo "=== LISTING : $target_name ==="
     echo "Généré le : $(date '+%d/%m/%Y à %H:%M')"
+    if [[ "$recursive_mode" == "true" ]]; then echo "Mode : RÉCURSIF (Structure complète)"; fi
     echo ""
-    printf "$FMT" "Date modif." "Poids" "Nom"
+    printf "$FMT" "Date modif." "Poids" "Nom / Structure"
     printf "$FMT" "----------------" "----------" "----------------------------------------"
 } &gt; "$listing_temp_path"
 
-total_files=0
-total_size_bytes=0
-oldest_date=""
+integer total_files=0
+integer total_folders=0
+integer total_size_bytes=0
+integer oldest_date=0
 current_date_epoch=$(date +%s)
 
-# 5. BOUCLE PRINCIPALE
-for item in "$@"; do
-  if [[ -e "$item" ]]; then
-    mod_date=$(stat -f "%Sm" -t "%d/%m/%Y %H:%M" "$item" 2&gt;/dev/null || echo "N/A")
-    mod_epoch=$(stat -f "%m" "$item")
+# --- FONCTION DE TRAITEMENT ---
+process_item() {
+    local f="$1"
+    local stat_output
+    stat_output=$(stat -f "%Sm|%m|%z" -t "%d/%m/%Y %H:%M" "$f" 2&gt;/dev/null)
+    
+    if [[ -z "$stat_output" ]]; then return; fi
+    
+    local mod_date="${stat_output%%|*}"
+    local rest="${stat_output#*|}"
+    local mod_epoch="${rest%%|*}"
+    local size_bytes="${rest#*|}"
+    local size_display=""
+    
+    if [[ -d "$f" ]]; then
+        size_display="[DOSSIER]"
+        ((total_folders++))
+    elif [[ -f "$f" ]]; then
+        if (( size_bytes &lt; 1048576 )); then
+            local skb=$(( size_bytes / 1024 ))
+            [[ $skb -eq 0 ]] &amp;&amp; skb=1
+            size_display="${skb} Ko"
+        else
+            local smo_int=$(( size_bytes / 1048576 ))
+            local smo_dec=$(( (size_bytes % 1048576) * 100 / 1048576 ))
+            size_display=$(printf "%d.%02d Mo" $smo_int $smo_dec)
+        fi
+        ((total_files++))
+        ((total_size_bytes+=size_bytes))
+    fi
 
-    # Gestion intelligente Ko / Mo (LIGNES)
-    if [[ -f "$item" ]]; then
-      size_bytes=$(stat -f "%z" "$item")
-      
-      if (( size_bytes &lt; 1048576 )); then
-         # &lt; 1 Mo : Affichage en Ko
-         size_kb=$(( size_bytes / 1024 ))
-         if (( size_kb == 0 )); then size_kb=1; fi
-         size_display="${size_kb} Ko"
-      else
-         # &gt; 1 Mo : Affichage en Mo
-         size_mo_item=$(echo "scale=2; $size_bytes/1048576" | bc)
-         size_display="${size_mo_item} Mo"
-      fi
-
-      total_files=$((total_files+1))
-      total_size_bytes=$((total_size_bytes + size_bytes))
+    local item_name=""
+    if [[ "$recursive_mode" == "true" ]]; then
+        if [[ "$f" == "$first_item" ]] &amp;&amp; [[ $nb_total -eq 1 ]]; then
+             item_name="[RACINE] $(basename "$f")"
+        else
+            local rel_path="${f#$parent_dir/}"
+            local slashes="${rel_path//[^\/]/}"
+            integer depth=${#slashes}
+            local indent=""
+            integer k=0
+            while (( k &lt; depth )); do
+                indent="   |  $indent"
+                ((k++))
+            done
+            if (( depth &gt; 0 )); then indent="$indent └─ "; fi
+            item_name="${indent}$(basename "$f")"
+        fi
     else
-      size_display="[DOSSIER]"
+        item_name=$(basename "$f")
     fi
 
-    item_name=$(basename "$item")
-
-    if [[ -z "$oldest_date" || "$mod_epoch" -lt "$oldest_date" ]]; then
-      oldest_date=$mod_epoch
+    if (( oldest_date == 0 || mod_epoch &lt; oldest_date )); then
+        oldest_date=$mod_epoch
     fi
 
-    # Écriture de la ligne
     printf "$FMT" "$mod_date" "$size_display" "$item_name" &gt;&gt; "$listing_temp_path"
-  fi
-done
+}
 
-# Pied de page du tableau
+# --- 5. BOUCLE PRINCIPALE ---
+if [[ "$recursive_mode" == "true" ]]; then
+    for item in "$@"; do
+        if [[ -d "$item" ]]; then
+            process_item "$item"
+            find "$item" -mindepth 1 | while read -r subfile; do
+                process_item "$subfile"
+            done
+        else
+            process_item "$item"
+        fi
+    done
+else
+    for item in "$@"; do
+        process_item "$item"
+    done
+fi
+
 {
     printf "$FMT" "----------------" "----------" "----------------------------------------"
 } &gt;&gt; "$listing_temp_path"
 
-# 6. BLOC RÉSUMÉ (Hors tableau)
-age_seconds=$((current_date_epoch - oldest_date))
-age_days=$((age_seconds / 86400))
+# --- 6. RÉSUMÉ ---
+if (( oldest_date &gt; 0 )); then
+    age_seconds=$((current_date_epoch - oldest_date))
+    age_days=$((age_seconds / 86400))
+else
+    age_days=0
+fi
 
-# --- CORRECTIF V3.2 : Gestion intelligente du TOTAL ---
 if (( total_size_bytes &lt; 1048576 )); then
-   # Total &lt; 1 Mo : On affiche en Ko
    total_kb=$(( total_size_bytes / 1024 ))
-   if (( total_kb == 0 )); then total_kb=1; fi
+   [[ $total_kb -eq 0 ]] &amp;&amp; total_kb=1
    total_display="${total_kb} Ko"
 else
-   # Total &gt; 1 Mo : On affiche en Mo
    total_mo_final=$(echo "scale=2; $total_size_bytes/1048576" | bc)
    total_display="${total_mo_final} Mo"
 fi
@@ -384,6 +454,7 @@ fi
     echo "📊 STATISTIQUES"
     echo "----------------"
     echo "Fichiers       : $total_files"
+    echo "Dossiers       : $total_folders"
     echo "Poids total    : $total_display"
     echo "Ancienneté max : $age_days jours"
 } &gt;&gt; "$listing_temp_path"
@@ -392,11 +463,13 @@ fi
 mv "$listing_temp_path" "$listing_final_path"
 rmdir "$temp_dir" 2&gt;/dev/null || true
 
-# Notification de fin
-title="Listing terminé"
+# Notif Fin
+title="Terminé"
 msg="Fichier créé : $(basename "$listing_final_path")"
-osascript -e "display notification \"$msg\" with title \"$title\""
-echo "$listing_final_path"</string>
+osascript -e "display notification \"$msg\" with title \"$title\"" &gt; /dev/null 2&gt;&amp;1
+
+# OUVERTURE SILENCIEUSE (DIRECTE)
+open -e "$listing_final_path"</string>
 					<key>CheckedForUserDefaultShell</key>
 					<true/>
 					<key>inputMethod</key>
@@ -511,7 +584,7 @@ echo "$listing_final_path"</string>
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:787.000000</string>
+				<string>391.500000:787.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run Shell Script.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -559,7 +632,7 @@ echo "$listing_final_path"</string>
 				<key>ActionParameters</key>
 				<dict>
 					<key>source</key>
-					<string>on run {input, parameters}    -- input contient un chemin POSIX (texte)    set theFilePOSIX to item 1 of input as text    set dlgText to "Le listing a été créé : " &amp; theFilePOSIX    set dlgButtons to {"Ouvrir le fichier", "OK"}    set userChoice to button returned of ¬        (display alert "Listing terminé" message dlgText buttons dlgButtons default button "Ouvrir le fichier")    if userChoice is "Ouvrir le fichier" then        set theFileAlias to POSIX file theFilePOSIX as alias        tell application "Finder"            open theFileAlias            activate        end tell    end if    return inputend run</string>
+					<string>on run {input, parameters}    display alert "Listing Effectué" message "Affichage du fichier " as informational giving up after 3    return inputend run</string>
 				</dict>
 				<key>BundleIdentifier</key>
 				<string>com.apple.Automator.RunScript</string>
@@ -613,7 +686,7 @@ end run</string>
 				<key>isViewVisible</key>
 				<integer>1</integer>
 				<key>location</key>
-				<string>389.500000:1032.000000</string>
+				<string>391.500000:1032.000000</string>
 				<key>nibPath</key>
 				<string>/System/Library/Automator/Run AppleScript.action/Contents/Resources/Base.lproj/main.nib</string>
 			</dict>
@@ -623,26 +696,26 @@ end run</string>
 	</array>
 	<key>connectors</key>
 	<dict>
-		<key>4167E6EF-ADBA-46A5-94A1-828892EE4097</key>
-		<dict>
-			<key>from</key>
-			<string>F55D33DA-C56B-46CC-9403-6C1E93719C55 - F55D33DA-C56B-46CC-9403-6C1E93719C55</string>
-			<key>to</key>
-			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
-		</dict>
-		<key>67CC3E0D-356A-4886-B4A4-25443F01902F</key>
+		<key>508330DF-0726-4531-AF3A-DD8006FC52D5</key>
 		<dict>
 			<key>from</key>
 			<string>E8349500-938B-408A-8DE8-8772CA7ADC5D - E8349500-938B-408A-8DE8-8772CA7ADC5D</string>
 			<key>to</key>
 			<string>48AAC1AE-81EB-4A6B-8CFD-0F95A61C4F26 - 48AAC1AE-81EB-4A6B-8CFD-0F95A61C4F26</string>
 		</dict>
-		<key>B416EDF8-051D-4D45-B06F-ADF060DDD745</key>
+		<key>53DDE4E5-5815-4EA8-89BB-B1E8E1C16473</key>
 		<dict>
 			<key>from</key>
 			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
 			<key>to</key>
 			<string>E8349500-938B-408A-8DE8-8772CA7ADC5D - E8349500-938B-408A-8DE8-8772CA7ADC5D</string>
+		</dict>
+		<key>547BDB2C-945A-42FC-BC83-FDEB59DECEE4</key>
+		<dict>
+			<key>from</key>
+			<string>F55D33DA-C56B-46CC-9403-6C1E93719C55 - F55D33DA-C56B-46CC-9403-6C1E93719C55</string>
+			<key>to</key>
+			<string>61DA5925-B4BD-4E5C-B3F3-D6304544FE61 - 61DA5925-B4BD-4E5C-B3F3-D6304544FE61</string>
 		</dict>
 	</dict>
 	<key>workflowMetaData</key>
