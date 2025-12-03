@@ -32,4 +32,5 @@ Sélectionnez 10, 100 ou 1000 fichiers, faites un clic droit, et obtenez un fich
 <img src="https://github.com/user-attachments/assets/74d8c06a-ec55-406f-824d-22f4bbb92403" width="600" alt="Démonstration Finder Summary"/>
 
 ---
-*Développé par HALL4Y.*
+*Développé par HALL4Y.*\
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I3RJTIK)
